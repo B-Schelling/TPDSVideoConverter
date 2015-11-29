@@ -502,14 +502,14 @@ static bool UpdateImageDetection(AVFrame* frame, int64_t ptsStream, sFrameBuffer
 		{
 			if (last[i].pixwb > 2200) break;
 			if (last[i].pixdiff > 10) diff_frames++;
-			if (last[i].pixdiff > 100) start_diff = i; 
+			if (last[i].pixdiff > 80) start_diff = i; 
 		}
 		if (diff_frames > 6 && last[start_diff].pts <= fb.ptsMovingEnded)
 		{
 			fb.ptsMovingEnded = ptsMovingOldEnded;
 			currentBlockFrameCountStart = frameCount-start_diff;
 			show("---------- CONTINUE @ %d (PTS: %"PRId64") ----------\n", frameCount-start_diff, last[start_diff].pts);
-			//for (int i = LASTNUM-1; i >= 0; i--) showlogonly("           F: %6d - PTS: %"PRId64" - PIXDIFF: %4d - PIXWB: %4d\n", frameCount-i, last[i].pts, last[i].pixdiff, last[i].pixwb);
+			for (int i = LASTNUM-1; i >= 0; i--) showlogonly("           F: %6d - PTS: %"PRId64" - PIXDIFF: %4d - PIXWB: %4d\n", frameCount-i, last[i].pts, last[i].pixdiff, last[i].pixwb);
 		}
 		else if (diff_frames > 6 && last[start_diff].pts > fb.ptsMovingEnded)
 		{
@@ -519,7 +519,7 @@ static bool UpdateImageDetection(AVFrame* frame, int64_t ptsStream, sFrameBuffer
 			int64_t audioTotal = av_rescale_q(fb.ptsAudioAmountVideoFrames * OutputVideoCodecCtx.ticks_per_frame, OutputVideoCodecCtx.time_base, OutputAudioCodecCtx.time_base);
 			show("---------- START @ %8d (PTS: %"PRId64") ---------- (VidFrames: %"PRId64" - AudioFrames: %"PRId64" - AudioTotal: %"PRId64" - Needed = %"PRId64") \n", frameCount-start_diff, fb.ptsMovingStarted
 				, fb.ptsDebugVideoFramesActuallyWritten, fb.ptsAudioAmountVideoFrames, audioTotal, audioTotal - fb.ptsAudioSamplesWritten);
-			//for (int i = LASTNUM-1; i >= 0; i--) showlogonly("           F: %6d - PTS: %"PRId64" - PIXDIFF: %4d - PIXWB: %4d\n", frameCount-i, last[i].pts, last[i].pixdiff, last[i].pixwb);
+			for (int i = LASTNUM-1; i >= 0; i--) showlogonly("           F: %6d - PTS: %"PRId64" - PIXDIFF: %4d - PIXWB: %4d\n", frameCount-i, last[i].pts, last[i].pixdiff, last[i].pixwb);
 			if (fb.ptsDebugVideoFramesActuallyWritten != fb.ptsAudioAmountVideoFrames) { show("\n\nERROR! VideoFramesActuallyWritten AND ptsAudioAmountVideoFrames MISMATCH!\n\n\n"); return false; }
 		}
 	}
@@ -529,14 +529,14 @@ static bool UpdateImageDetection(AVFrame* frame, int64_t ptsStream, sFrameBuffer
 		for (int i = 1; i < LASTNUM; i++)
 		{
 			if (last[i].pixdiff > 10) diff_frames++;
-			if (last[i].pixdiff > 100 && end_diff == LASTNUM-1) end_diff = i;
+			if (last[i].pixdiff > 80 && end_diff == LASTNUM-1) end_diff = i;
 			if (last[i].pixwb > 2200) end_diff = LASTNUM-1;
 		}
 		const bool alreadyEnded = (fb.ptsMovingStarted < fb.ptsMovingEnded);
 		if (diff_frames < 7 && last[end_diff].pts > fb.ptsMovingStarted && (frameCount-(end_diff-1) - currentBlockFrameCountStart) >= BLOCK_FRAMES_MIN)
 		{
 			if (!alreadyEnded) { ptsMovingOldEnded = fb.ptsMovingEnded; fb.ptsMovingEnded = last[end_diff-1].pts; }
-			//for (int i = LASTNUM-1; i >= 0; i--) showlogonly("           F: %6d - PTS: %"PRId64" - PIXDIFF: %4d - PIXWB: %4d\n", frameCount-i, last[i].pts, last[i].pixdiff, last[i].pixwb);
+			for (int i = LASTNUM-1; i >= 0; i--) showlogonly("           F: %6d - PTS: %"PRId64" - PIXDIFF: %4d - PIXWB: %4d\n", frameCount-i, last[i].pts, last[i].pixdiff, last[i].pixwb);
 			show("---------- END   @ %8d (PTS: %"PRId64") ---------- (This Block Count: %"PRId64")\n\n", frameCount-(end_diff-1), fb.ptsMovingEnded, frameCount-(end_diff-1) - currentBlockFrameCountStart);
 			currentBlockFrameCountStart = 0;
 		}
@@ -586,24 +586,27 @@ static bool DecodeFrame(const AVPacket* pkt, AVFrame* frame, AVStream* i_stream,
 	if (numbf)
 	{
 		sFrameBuffering::sStream::sBackupFrame& prefbf = frameBuffering->backup_frames.back();
-		int64_t duration = (frame->pkt_duration == 0 || frame->pkt_duration == AV_NOPTS_VALUE ? 0 : av_rescale_q(frame->pkt_duration, i_stream->codec->time_base, i_stream->time_base));
-		if (!duration) duration  = av_rescale_q((isVideo ? i_stream->codec->ticks_per_frame : frame->nb_samples), i_stream->codec->time_base, i_stream->time_base);
-		if (!duration && numbf > 1) duration = prefbf.ptsStream - frameBuffering->backup_frames[numbf-2].ptsStream;
-		if (duration > 0 && (bf.ptsStream < prefbf.ptsStream || bf.ptsStream > prefbf.ptsStream + duration*100))
+		if (!isVideo) //only do global pts shifting on audio track
 		{
-			ptsShift += (prefbf.ptsStream - bf.ptsStream) + duration;
-			show("===================\nSHIFTING BAD PTS ON %s FRAME %7"PRId64"!\n", (isVideo ? "VIDEO" : "AUDIO"), frameBuffering->count);
-			show("    PREV FRAME: %"PRId64" (SRC ST: %"PRId64" - CH: %"PRId64")\n", prefbf.ptsStream, av_rescale_q(prefbf.frame->pts, i_stream->codec->time_base, i_stream->time_base), prefbf.frame->pts);
-			show("    THIS FRAME: %"PRId64" (SRC ST: %"PRId64" - CH: %"PRId64")\n", bf.ptsStream, av_rescale_q(frame->pts, i_stream->codec->time_base, i_stream->time_base), frame->pts);
-			show("    DIFF: %"PRId64"\n    FRAME DURATION: %"PRId64"\n    ADD SHIFTING: %"PRId64" (TOTAL: %"PRId64")\n===================\n", (prefbf.ptsStream - bf.ptsStream), duration, (prefbf.ptsStream - bf.ptsStream) + duration, ptsShift);
-			bf.ptsStream += (prefbf.ptsStream - bf.ptsStream) + duration;
+			int64_t duration = (frame->pkt_duration == 0 || frame->pkt_duration == AV_NOPTS_VALUE ? 0 : av_rescale_q(frame->pkt_duration, i_stream->codec->time_base, i_stream->time_base));
+			if (!duration) duration  = av_rescale_q((isVideo ? i_stream->codec->ticks_per_frame : frame->nb_samples), i_stream->codec->time_base, i_stream->time_base);
+			if (!duration && numbf > 1) duration = prefbf.ptsStream - frameBuffering->backup_frames[numbf-2].ptsStream;
+			if (duration > 0 && (bf.ptsStream < prefbf.ptsStream || bf.ptsStream > prefbf.ptsStream + duration*100))
+			{
+				ptsShift += (prefbf.ptsStream - bf.ptsStream) + duration;
+				show("===================\nSHIFTING BAD PTS ON %s FRAME %7"PRId64"!\n", (isVideo ? "VIDEO" : "AUDIO"), frameBuffering->count);
+				show("    PREV FRAME: %"PRId64" (SRC ST: %"PRId64" - CH: %"PRId64")\n", prefbf.ptsStream, av_rescale_q(prefbf.frame->pts, i_stream->codec->time_base, i_stream->time_base), prefbf.frame->pts);
+				show("    THIS FRAME: %"PRId64" (SRC ST: %"PRId64" - CH: %"PRId64")\n", bf.ptsStream, av_rescale_q(frame->pts, i_stream->codec->time_base, i_stream->time_base), frame->pts);
+				show("    DIFF: %"PRId64"\n    FRAME DURATION: %"PRId64"\n    ADD SHIFTING: %"PRId64" (TOTAL: %"PRId64")\n===================\n", (prefbf.ptsStream - bf.ptsStream), duration, (prefbf.ptsStream - bf.ptsStream) + duration, ptsShift);
+				bf.ptsStream += (prefbf.ptsStream - bf.ptsStream) + duration;
+			}
 		}
-		else if (bf.ptsStream < prefbf.ptsStream)
+		if (bf.ptsStream < prefbf.ptsStream)
 		{
 			show("===================\nFIXING BAD PTS ON %s FRAME %7"PRId64"!\n", (isVideo ? "VIDEO" : "AUDIO"), frameBuffering->count);
 			show("    PREV FRAME: %"PRId64" (SRC ST: %"PRId64" - CH: %"PRId64")\n", prefbf.ptsStream, av_rescale_q(prefbf.frame->pts, i_stream->codec->time_base, i_stream->time_base), prefbf.frame->pts);
 			show("    THIS FRAME: %"PRId64" (SRC ST: %"PRId64" - CH: %"PRId64")\n", bf.ptsStream, av_rescale_q(frame->pts, i_stream->codec->time_base, i_stream->time_base), frame->pts);
-			show("    DIFF: %"PRId64"\n    FRAME DURATION: %"PRId64"\n===================\n", (prefbf.ptsStream - bf.ptsStream), duration);
+			show("    DIFF: %"PRId64"\n===================\n", (prefbf.ptsStream - bf.ptsStream));
 			bf.ptsStream = prefbf.ptsStream;
 		}
 	}
